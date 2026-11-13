@@ -1,0 +1,22 @@
+[Unit]
+Description=LRM WhatsApp Web QR client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=whatsapp-qr
+Group=whatsapp-qr
+WorkingDirectory=/opt/whatsapp-qr
+Environment=NODE_ENV=production
+Environment=PORT=8788
+ExecStart=/usr/bin/node /opt/whatsapp-qr/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/whatsapp-qr
+
+[Install]
+WantedBy=multi-user.target
