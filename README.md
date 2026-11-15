@@ -25,6 +25,22 @@ node --check server.js
 PORT=8788 node server.js
 ```
 
+Antes de iniciar, configure a autenticação fora do repositório:
+
+```text
+WHATSAPP_CONTROL_USERNAME=operador
+WHATSAPP_CONTROL_PASSWORD_HASH=scrypt$16384$8$1$...
+```
+
+Gere apenas o hash, sem registrar a senha:
+
+```powershell
+node tools/hash-password.js "uma senha forte"
+```
+
+Sem essas variáveis, o serviço permanece sem liberar o painel e as APIs
+mutáveis.
+
 Em produção, o serviço systemd está em `whatsapp-qr.service`. Ajuste os
 caminhos da sessão e do banco para o ambiente de destino; eles não devem ser
 versionados.

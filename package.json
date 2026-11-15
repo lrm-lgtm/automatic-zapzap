@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check auth.js && node --check tools/hash-password.js"
+  },
   "dependencies": {
     "express": "^5.1.0",
     "qrcode": "^1.5.4",
