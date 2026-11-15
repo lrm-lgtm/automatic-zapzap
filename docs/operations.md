@@ -7,7 +7,7 @@ O serviço exige, fora do repositório:
 - `WHATSAPP_CONTROL_USERNAME`;
 - `WHATSAPP_CONTROL_PASSWORD_HASH`;
 - `WHATSAPP_CONTROL_ENABLE_DISPATCH=false` durante o piloto.
-- `WHATSAPP_CONTROL_TRUSTED_PROXY_IPS=127.0.0.1,::1` quando o HTTPS privado
+- `WHATSAPP_CONTROL_TRUSTED_PROXY_IPS=127.0.0.1,::1,192.168.254.200` quando o HTTPS privado
   termina em um proxy local, como Tailscale Serve. A lista deve conter somente
   enderecos de proxies administrados; nao use `trust proxy=1` por padrao.
 
@@ -47,11 +47,11 @@ integração não oficial e deve permanecer em piloto, com dispatch desabilitado
 
 ## Publicação CT 300
 
-Ainda não publicada. O inventário operacional disponível comprova canal
-administrativo do Proxmox/CT 210, mas não registra identidade, host SSH ou
-executor autorizado para o CT 300. Não iniciar deploy até o canal guest do CT
-300 ser cadastrado e validado. A sessão WhatsApp existente permanece fora do
-Git e não deve ser removida, copiada ou recriada.
+O commit `913d6c2ab42819fa8b8a328433f7bda6a0148180` está publicado no CT 300.
+O acesso privado validado é `https://atendimento1.taild2b8d7.ts.net:8443/`.
+O Tailscale Serve usa o Windows como proxy LAN para o CT 300, sem dependência do
+CT 210 e sem Funnel. A sessão WhatsApp existente permanece fora do Git e não foi
+removida, recriada ou usada por uma segunda instância.
 
 ## Limites da V1 mobile
 

@@ -1,35 +1,55 @@
-# WhatsApp Control Mobile V1 — estado de publicação
+# WhatsApp Control Mobile V1 - estado de publicacao
 
-## Código validado
+## Codigo implantado
 
-- Base: `e72662e`.
-- Alterações locais: proxy confiável, logout CSRF, rate limiting, dependências
-  auditadas e testes de regressão.
-- Testes: `npm run check` passou; `npm test` passou com 3 testes; `npm audit`
-  reportou zero vulnerabilidades.
-- Dispatch: permanece desabilitado; não foi criado envio real.
+- Commit: `913d6c2ab42819fa8b8a328433f7bda6a0148180`.
+- Repositorio: `lrm-lgtm/automatic-zapzap`, branch `main`.
+- `npm run check`: aprovado.
+- `npm test`: aprovado.
+- `npm audit`: zero vulnerabilidades reportadas.
+- `WHATSAPP_CONTROL_ENABLE_DISPATCH=false` permanece ativo.
 
-## Deploy
+## CT 300
 
-Status: **não concluído**.
+- Host: `192.168.254.108`.
+- Servico: `whatsapp-qr.service`.
+- Health validado: `state=authenticated`, `has_qr=false`, `auth_configured=true`, `dispatch_enabled=false`.
+- Processo observado: um unico `/opt/whatsapp-qr/server.js`.
+- Sessao preservada em `/var/lib/whatsapp-qr/session`.
+- Nenhum QR foi gerado e nenhum disparo real foi executado.
 
-O inventário autorizado disponível registra Proxmox e CT 210, mas não fornece
-um canal administrativo validado para o CT 300. Não houve SSH, console, cópia de
-arquivos, restart de serviço, configuração Tailscale ou alteração de sessão.
+## Backup e rollback
 
-## Bloqueio preciso
+- Backup: `/var/backups/whatsapp-control/20261115T043026Z`.
+- Inclui sessao, banco SQLite, codigo, lockfile, `package.json` e unit systemd.
+- Manifesto: `SHA256SUMS`.
+- Arquivo de sessao validado com `tar -tzf` e hash SHA-256.
+- Para rollback, parar somente `whatsapp-qr.service`, restaurar os arquivos do backup,
+  reconstruir as dependencias da versao anterior e iniciar o mesmo servico. Nunca
+  remover `/var/lib/whatsapp-qr/session`.
 
-Falta cadastrar/validar uma identidade guest autorizada para o CT 300 no cofre
-e no executor operacional. O inventário atual informa que o binding do executor
-Proxmox/CT 210 está pendente e não substitui acesso ao guest; o token amplo
-observado no Proxmox não é adequado para reutilização em um deploy mínimo.
+## URL privada
 
-## Procedimento de retomada
+- URL efetivamente testada: `https://atendimento1.taild2b8d7.ts.net:8443/`.
+- Tailscale Serve encaminha para `http://192.168.254.108:8788`.
+- HTTPS privado validado para `/health`, `/login`, `/manifest.webmanifest` e `/sw.js`.
+- Funnel removido/desabilitado.
+- A raiz `https://atendimento1.taild2b8d7.ts.net/` continua reservada ao BrasilSat Gestor;
+  o WhatsApp Control usa a porta HTTPS `8443` para nao substituir esse servico.
 
-1. Validar pelo canal autorizado o CT 300, hostname, IP e identidade guest.
-2. Criar backup consistente do diretório do serviço, banco e
-   `/var/lib/whatsapp-qr/session`, sem logout nem QR novo.
-3. Publicar o commit validado com `WHATSAPP_CONTROL_ENABLE_DISPATCH=false`.
-4. Configurar Tailscale Serve somente no CT 300, sem Funnel e sem CT 210.
-5. Validar login, PWA, health, WhatsApp pronto e acesso móvel fora da LAN.
-6. Registrar commit, hostname, evidências e rollback.
+## Login e PWA
+
+- Credencial do usuario `operator` provisionada fora do GitHub no Bitwarden.
+- Login HTTPS validado com status `200`.
+- Cookie de sessao validado com `HttpOnly`, `SameSite=Strict` e `Secure`.
+- Dashboard, manifest e service worker responderam com status `200`.
+- Sessao de teste encerrada apos a validacao.
+
+## Limites remanescentes
+
+- O teste foi feito a partir de um dispositivo Windows membro da tailnet; ainda falta
+  confirmar a abertura pelo celular fora da LAN.
+- O conector permanece em `authenticated` e sem QR; o estado `ready` ainda nao foi
+  observado neste ciclo.
+- `whatsapp-web.js` continua sendo uma integracao nao oficial.
+- A integracao MONI permanece desativada e sem eventos ficticios.
