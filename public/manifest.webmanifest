@@ -1,0 +1,13 @@
+{
+  "name": "WhatsApp Control",
+  "short_name": "WhatsApp Control",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#101820",
+  "theme_color": "#101820",
+  "description": "Central privada de operação WhatsApp do LRM.",
+  "icons": [
+    { "src": "/assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -2,7 +2,10 @@ const crypto = require('node:crypto');
 
 const COOKIE_NAME = 'wac_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 8;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const sessions = new Map();
+const loginAttempts = new Map();
 
 function parseCookies(header = '') {
   return Object.fromEntries(header.split(';').map((part) => part.trim().split('='))
@@ -52,7 +55,8 @@ function getSession(req) {
 }
 
 function setSessionCookie(res, id) {
-  res.set('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(id)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_MS / 1000}`);
+  const secure = res.req && (res.req.secure || res.req.get('x-forwarded-proto') === 'https') ? '; Secure' : '';
+  res.set('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(id)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_MS / 1000}${secure}`);
 }
 
 function clearSessionCookie(res) {
@@ -75,9 +79,17 @@ function requireCsrf(req, res, next) {
 function login(req, res) {
   if (!configured()) return res.status(503).json({ error: 'auth_not_configured' });
   const username = String(req.body.username || '');
+  const key = `${req.ip || 'unknown'}:${username}`;
+  const now = Date.now();
+  const attempts = loginAttempts.get(key) || { count: 0, windowStartedAt: now };
+  if (now - attempts.windowStartedAt >= LOGIN_WINDOW_MS) { attempts.count = 0; attempts.windowStartedAt = now; }
+  if (attempts.count >= MAX_LOGIN_ATTEMPTS) return res.status(429).json({ error: 'login_rate_limited' });
   if (!safeEqual(username, process.env.WHATSAPP_CONTROL_USERNAME) || !verifyPassword(req.body.password, process.env.WHATSAPP_CONTROL_PASSWORD_HASH)) {
+    attempts.count += 1;
+    loginAttempts.set(key, attempts);
     return res.status(401).json({ error: 'invalid_credentials' });
   }
+  loginAttempts.delete(key);
   const session = createSession(username);
   setSessionCookie(res, session.id);
   res.json({ authenticated: true, csrf_token: session.csrf });
@@ -89,4 +101,11 @@ function authStatus(req, res) {
   res.json({ authenticated: true, username: session.username, csrf_token: session.csrf });
 }
 
-module.exports = { configured, login, authStatus, requireAuth, requireCsrf, getSession, setSessionCookie, clearSessionCookie };
+function logout(req, res) {
+  const id = parseCookies(req.headers.cookie)[COOKIE_NAME];
+  if (id) sessions.delete(id);
+  clearSessionCookie(res);
+  res.status(204).end();
+}
+
+module.exports = { configured, login, authStatus, logout, requireAuth, requireCsrf, getSession, setSessionCookie, clearSessionCookie };

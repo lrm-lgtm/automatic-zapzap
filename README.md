@@ -6,11 +6,14 @@ WhatsApp Web do LRM.
 ## Escopo atual
 
 - painel HTTP mobile-first;
+- PWA instalável com dashboard de saúde;
+- login próprio com sessão e proteção CSRF;
 - rascunhos de campanha com título, mensagem, destinatários e horário;
 - aprovação e cancelamento explícitos;
 - worker persistente com SQLite;
 - limite de 20 destinatários por campanha e intervalo entre envios;
 - histórico de estado e resultados mascarados;
+- integração MONI explicitamente pendente, sem eventos fictícios;
 - cliente `whatsapp-web.js` com sessão persistida fora do repositório.
 
 O envio só ocorre para campanhas aprovadas e quando o cliente WhatsApp está no
@@ -55,3 +58,5 @@ versionados.
 
 Este repositório não contém QR codes, sessões, tokens, bancos de produção ou
 credenciais.
+
+O roteiro operacional está em [`docs/operations.md`](docs/operations.md).
