@@ -5,9 +5,10 @@ const QRCode = require('qrcode');
 const sqlite3 = require('sqlite3').verbose();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const auth = require('./auth');
+const { trustedProxySetting } = require('./security');
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', trustedProxySetting(process.env.WHATSAPP_CONTROL_TRUSTED_PROXY_IPS));
 const port = Number(process.env.PORT || 8788);
 const db = new sqlite3.Database('/var/lib/whatsapp-qr/campaigns.sqlite3');
 let state = 'starting';
@@ -66,7 +67,7 @@ app.get('/login', (_req, res) => res.type('html').send(`<!doctype html><meta cha
 app.post('/login', auth.login);
 app.get('/api/auth/status', auth.authStatus);
 app.use(auth.requireAuth);
-app.post('/logout', auth.logout);
+app.post('/logout', auth.requireAuth, auth.requireCsrfOrSameOrigin, auth.logout);
 app.get('/api/status', (_req, res) => res.json({ service: 'whatsapp-control', state, connected: state === 'ready', authenticated: state === 'authenticated' || state === 'ready', has_qr: Boolean(qrDataUrl), dispatch_enabled: dispatchEnabled, updated_at: nowIso(), error: lastError ? 'service_error' : null }));
 app.get('/api/moni/events', (_req, res) => res.json({ integration: 'not_connected', events: [], message: 'A integração MONI será habilitada em uma etapa posterior.' }));
 app.get('/api/campaigns', async (_req, res) => { try { const rows = await all('SELECT * FROM campaigns ORDER BY datetime(created_at) DESC LIMIT 50'); res.json(rows.map((row) => ({ ...row, recipients: JSON.parse(row.recipients_json).map((number) => `${number.slice(0, 3)}***`) }))); } catch { res.status(500).json({ error: 'database_error' }); } });

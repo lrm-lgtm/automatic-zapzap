@@ -1,11 +1,10 @@
 const crypto = require('node:crypto');
+const { SlidingWindowLimiter } = require('./security');
 
 const COOKIE_NAME = 'wac_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-const MAX_LOGIN_ATTEMPTS = 8;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const sessions = new Map();
-const loginAttempts = new Map();
+const loginLimiter = new SlidingWindowLimiter({ max: 8, windowMs: 15 * 60 * 1000, maxKeys: 4096 });
 
 function parseCookies(header = '') {
   return Object.fromEntries(header.split(';').map((part) => part.trim().split('='))
@@ -55,12 +54,13 @@ function getSession(req) {
 }
 
 function setSessionCookie(res, id) {
-  const secure = res.req && (res.req.secure || res.req.get('x-forwarded-proto') === 'https') ? '; Secure' : '';
+  const secure = res.req && res.req.secure ? '; Secure' : '';
   res.set('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(id)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_MS / 1000}${secure}`);
 }
 
 function clearSessionCookie(res) {
-  res.set('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+  const secure = res.req && res.req.secure ? '; Secure' : '';
+  res.set('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
 function requireAuth(req, res, next) {
@@ -76,20 +76,30 @@ function requireCsrf(req, res, next) {
   next();
 }
 
+function requireCsrfOrSameOrigin(req, res, next) {
+  const session = req.auth || getSession(req);
+  if (!session) return res.status(401).json({ error: 'authentication_required' });
+  if (safeEqual(req.get('x-csrf-token'), session.csrf)) return next();
+  const origin = req.get('origin');
+  const referer = req.get('referer');
+  const expected = `${req.protocol}://${req.get('host')}`;
+  if (origin === expected || (referer && referer.startsWith(`${expected}/`))) return next();
+  return res.status(403).json({ error: 'csrf_failed' });
+}
+
 function login(req, res) {
   if (!configured()) return res.status(503).json({ error: 'auth_not_configured' });
   const username = String(req.body.username || '');
-  const key = `${req.ip || 'unknown'}:${username}`;
-  const now = Date.now();
-  const attempts = loginAttempts.get(key) || { count: 0, windowStartedAt: now };
-  if (now - attempts.windowStartedAt >= LOGIN_WINDOW_MS) { attempts.count = 0; attempts.windowStartedAt = now; }
-  if (attempts.count >= MAX_LOGIN_ATTEMPTS) return res.status(429).json({ error: 'login_rate_limited' });
+  const key = `${req.ip || 'unknown'}:${username.slice(0, 120)}`;
+  const rate = loginLimiter.consume(key);
+  if (!rate.allowed) {
+    res.set('Retry-After', String(rate.retryAfterSeconds));
+    return res.status(429).json({ error: 'login_rate_limited' });
+  }
   if (!safeEqual(username, process.env.WHATSAPP_CONTROL_USERNAME) || !verifyPassword(req.body.password, process.env.WHATSAPP_CONTROL_PASSWORD_HASH)) {
-    attempts.count += 1;
-    loginAttempts.set(key, attempts);
     return res.status(401).json({ error: 'invalid_credentials' });
   }
-  loginAttempts.delete(key);
+  loginLimiter.clear(key);
   const session = createSession(username);
   setSessionCookie(res, session.id);
   res.json({ authenticated: true, csrf_token: session.csrf });
@@ -108,4 +118,4 @@ function logout(req, res) {
   res.status(204).end();
 }
 
-module.exports = { configured, login, authStatus, logout, requireAuth, requireCsrf, getSession, setSessionCookie, clearSessionCookie };
+module.exports = { configured, login, authStatus, logout, requireAuth, requireCsrf, requireCsrfOrSameOrigin, getSession, setSessionCookie, clearSessionCookie };

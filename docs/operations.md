@@ -7,6 +7,9 @@ O serviço exige, fora do repositório:
 - `WHATSAPP_CONTROL_USERNAME`;
 - `WHATSAPP_CONTROL_PASSWORD_HASH`;
 - `WHATSAPP_CONTROL_ENABLE_DISPATCH=false` durante o piloto.
+- `WHATSAPP_CONTROL_TRUSTED_PROXY_IPS=127.0.0.1,::1` quando o HTTPS privado
+  termina em um proxy local, como Tailscale Serve. A lista deve conter somente
+  enderecos de proxies administrados; nao use `trust proxy=1` por padrao.
 
 O hash é gerado localmente com `node tools/hash-password.js`. A senha em
 texto nunca deve ser gravada em arquivo de projeto, commit ou log.
@@ -28,6 +31,27 @@ obter QR Code.
 6. Validar `/health`, estado do processo e preservação da sessão.
 
 O rollback não deve apagar sessão, banco, anexos ou logs de auditoria.
+
+## Estado de segurança do código
+
+O commit de base `e72662e` tinha `app.set('trust proxy', 1)`, logout sem
+verificação CSRF e um limitador de login sem limite de chaves. A versão validada
+usa uma allowlist exata de proxies, exige sessão e CSRF ou origem estritamente
+do próprio host no logout, e limita/pruneia as chaves do rate limiter.
+
+O `npm audit` validado após a atualização do lock reportou `0` vulnerabilidades
+info/low/moderate/high/critical. A atualização foi explícita, sem
+`npm audit fix --force`: `sqlite3=6.0.1`, overrides de Puppeteer e dependências
+de arquivamento corrigidas. O cliente `whatsapp-web.js` continua sendo uma
+integração não oficial e deve permanecer em piloto, com dispatch desabilitado.
+
+## Publicação CT 300
+
+Ainda não publicada. O inventário operacional disponível comprova canal
+administrativo do Proxmox/CT 210, mas não registra identidade, host SSH ou
+executor autorizado para o CT 300. Não iniciar deploy até o canal guest do CT
+300 ser cadastrado e validado. A sessão WhatsApp existente permanece fora do
+Git e não deve ser removida, copiada ou recriada.
 
 ## Limites da V1 mobile
 
