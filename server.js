@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('node:crypto');
 const QRCode = require('qrcode');
 const sqlite3 = require('sqlite3').verbose();
 const { Client, LocalAuth } = require('whatsapp-web.js');
@@ -18,8 +19,24 @@ const get = (sql, params = []) => new Promise((resolve, reject) => db.get(sql, p
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const nowIso = () => new Date().toISOString();
 const validRecipient = (value) => /^\d{8,15}$/.test(String(value || ''));
+const contentHash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-db.serialize(() => { db.run(`CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,message TEXT NOT NULL,recipients_json TEXT NOT NULL,scheduled_at TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,approved_at TEXT,started_at TEXT,finished_at TEXT,result_json TEXT)`); });
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,message TEXT NOT NULL,recipients_json TEXT NOT NULL,scheduled_at TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,approved_at TEXT,started_at TEXT,finished_at TEXT,result_json TEXT,revision INTEGER NOT NULL DEFAULT 1,approval_status TEXT NOT NULL DEFAULT 'pending',schedule_status TEXT NOT NULL DEFAULT 'unscheduled',delivery_status TEXT NOT NULL DEFAULT 'idle',approved_revision INTEGER,content_hash TEXT,approved_content_hash TEXT,approval_snapshot_json TEXT,approved_by TEXT,cancelled_at TEXT)`);
+  for (const column of [
+    ['revision', 'INTEGER NOT NULL DEFAULT 1'],
+    ['approval_status', "TEXT NOT NULL DEFAULT 'pending'"],
+    ['schedule_status', "TEXT NOT NULL DEFAULT 'unscheduled'"],
+    ['delivery_status', "TEXT NOT NULL DEFAULT 'idle'"],
+    ['approved_revision', 'INTEGER'],
+    ['content_hash', 'TEXT'],
+    ['approved_content_hash', 'TEXT'],
+    ['approval_snapshot_json', 'TEXT'],
+    ['approved_by', 'TEXT'],
+    ['cancelled_at', 'TEXT']
+  ]) db.run(`ALTER TABLE campaigns ADD COLUMN ${column[0]} ${column[1]}`, () => {});
+  db.run("UPDATE campaigns SET approval_status=CASE WHEN status='approved' THEN 'approved' WHEN status='cancelled' THEN 'revoked' ELSE COALESCE(approval_status,'pending') END, schedule_status=CASE WHEN status IN ('approved','sending','finished') THEN 'scheduled' WHEN status='cancelled' THEN 'cancelled' ELSE CASE WHEN scheduled_at IS NOT NULL THEN 'scheduled' ELSE 'unscheduled' END END, delivery_status=CASE WHEN status='sending' THEN 'sending' WHEN status='finished' THEN 'completed' WHEN status='cancelled' THEN 'idle' ELSE COALESCE(delivery_status,'idle') END, revision=COALESCE(revision,1), content_hash=COALESCE(content_hash,'legacy')");
+});
 
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: '/var/lib/whatsapp-qr/session' }),
@@ -52,25 +69,36 @@ app.post('/api/campaigns', auth.requireCsrf, async (req, res) => {
   const scheduledAt = new Date(req.body.scheduled_at || '');
   if (!title || !message || !recipients.length || recipients.length > 20 || recipients.some((number) => !validRecipient(number))) return res.status(400).json({ error: 'invalid_campaign', detail: 'Use 1-20 números em formato internacional, somente contatos autorizados.' });
   if (Number.isNaN(scheduledAt.getTime())) return res.status(400).json({ error: 'invalid_schedule' });
-  try { const result = await run('INSERT INTO campaigns (title,message,recipients_json,scheduled_at,status,created_at) VALUES (?,?,?,?,?,?)', [title, message, JSON.stringify(recipients), scheduledAt.toISOString(), 'draft', nowIso()]); res.status(201).json({ id: result.lastID, status: 'draft' }); } catch { res.status(500).json({ error: 'database_error' }); }
+  const hash = contentHash({ title, message, recipients });
+  try { const result = await run('INSERT INTO campaigns (title,message,recipients_json,scheduled_at,status,created_at,revision,approval_status,schedule_status,delivery_status,content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [title, message, JSON.stringify(recipients), scheduledAt.toISOString(), 'draft', nowIso(), 1, 'pending', 'scheduled', 'idle', hash]); res.status(201).json({ id: result.lastID, status: 'draft', approval_status: 'pending', schedule_status: 'scheduled' }); } catch { res.status(500).json({ error: 'database_error' }); }
 });
 
-app.post('/api/campaigns/:id/approve', auth.requireCsrf, async (req, res) => { try { const result = await run("UPDATE campaigns SET status='approved', approved_at=? WHERE id=? AND status='draft'", [nowIso(), req.params.id]); if (!result.changes) return res.status(409).json({ error: 'not_a_draft' }); res.json({ id: Number(req.params.id), status: 'approved' }); } catch { res.status(500).json({ error: 'database_error' }); } });
-app.post('/api/campaigns/:id/cancel', auth.requireCsrf, async (req, res) => { try { const result = await run("UPDATE campaigns SET status='cancelled', finished_at=? WHERE id=? AND status IN ('draft','approved')", [nowIso(), req.params.id]); if (!result.changes) return res.status(409).json({ error: 'not_cancellable' }); res.json({ id: Number(req.params.id), status: 'cancelled' }); } catch { res.status(500).json({ error: 'database_error' }); } });
+app.post('/api/campaigns/:id/approve', auth.requireCsrf, async (req, res) => {
+  try {
+    const campaign = await get('SELECT * FROM campaigns WHERE id=?', [req.params.id]);
+    if (!campaign || campaign.approval_status !== 'pending' || campaign.status === 'cancelled') return res.status(409).json({ error: 'not_approvable' });
+    const snapshot = { title: campaign.title, message: campaign.message, recipients: JSON.parse(campaign.recipients_json), scheduled_at: campaign.scheduled_at, revision: campaign.revision, content_hash: campaign.content_hash };
+    const stamp = nowIso();
+    const result = await run("UPDATE campaigns SET status='approved', approval_status='approved', delivery_status='queued', approved_at=?, approved_by=?, approved_revision=?, approved_content_hash=?, approval_snapshot_json=? WHERE id=? AND approval_status='pending'", [stamp, req.auth.username, campaign.revision, campaign.content_hash, JSON.stringify(snapshot), campaign.id]);
+    if (!result.changes) return res.status(409).json({ error: 'approval_conflict' });
+    res.json({ id: Number(req.params.id), status: 'approved', approval_status: 'approved', approved_revision: campaign.revision });
+  } catch { res.status(500).json({ error: 'database_error' }); }
+});
+app.post('/api/campaigns/:id/cancel', auth.requireCsrf, async (req, res) => { try { const stamp = nowIso(); const result = await run("UPDATE campaigns SET status='cancelled', approval_status='revoked', schedule_status='cancelled', delivery_status='idle', finished_at=?, cancelled_at=? WHERE id=? AND status IN ('draft','approved')", [stamp, stamp, req.params.id]); if (!result.changes) return res.status(409).json({ error: 'not_cancellable' }); res.json({ id: Number(req.params.id), status: 'cancelled' }); } catch { res.status(500).json({ error: 'database_error' }); } });
 
 async function dispatchDueCampaign() {
   if (dispatching || state !== 'ready') return;
-  const campaign = await get("SELECT * FROM campaigns WHERE status='approved' AND datetime(scheduled_at) <= datetime('now') ORDER BY datetime(scheduled_at) LIMIT 1");
+  const campaign = await get("SELECT * FROM campaigns WHERE status='approved' AND approval_status='approved' AND schedule_status='scheduled' AND delivery_status='queued' AND approved_revision=revision AND datetime(scheduled_at) <= datetime('now') ORDER BY datetime(scheduled_at) LIMIT 1");
   if (!campaign) return;
   dispatching = true;
-  await run("UPDATE campaigns SET status='sending', started_at=? WHERE id=?", [nowIso(), campaign.id]);
+  await run("UPDATE campaigns SET status='sending', delivery_status='sending', started_at=? WHERE id=? AND delivery_status='queued'", [nowIso(), campaign.id]);
   const results = [];
   for (const number of JSON.parse(campaign.recipients_json)) {
     if (!validRecipient(number)) { results.push({ number: 'invalid', status: 'rejected' }); continue; }
     try { await client.sendMessage(`${number}@c.us`, campaign.message); results.push({ number: `${number.slice(0, 3)}***`, status: 'accepted' }); } catch { results.push({ number: `${number.slice(0, 3)}***`, status: 'error' }); }
     await new Promise((resolve) => setTimeout(resolve, 12000));
   }
-  await run("UPDATE campaigns SET status='finished', finished_at=?, result_json=? WHERE id=?", [nowIso(), JSON.stringify(results), campaign.id]);
+  await run("UPDATE campaigns SET status='finished', delivery_status='completed', finished_at=?, result_json=? WHERE id=?", [nowIso(), JSON.stringify(results), campaign.id]);
   dispatching = false;
 }
 setInterval(() => dispatchDueCampaign().catch((error) => { dispatching = false; lastError = String(error); }), 15000);
@@ -79,7 +107,7 @@ app.get('/', async (req, res) => {
   if (!req.auth) return res.redirect('/login');
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   let rows = []; try { rows = await all('SELECT * FROM campaigns ORDER BY datetime(created_at) DESC LIMIT 20'); } catch {}
-  const cards = rows.map((row) => `<article><b>${esc(row.title)}</b><span>${esc(row.status)} · ${esc(row.scheduled_at)}</span><small>${esc(row.message.slice(0, 140))}</small>${row.status === 'draft' ? `<button onclick="approve(${row.id})">Aprovar</button><button onclick="cancelCampaign(${row.id})" style="background:#71434b">Cancelar</button>` : ''}</article>`).join('') || '<p>Nenhum disparo criado.</p>';
+  const cards = rows.map((row) => `<article><b>${esc(row.title)}</b><span>${esc(row.approval_status || row.status)} · ${esc(row.schedule_status || 'legacy')} · ${esc(row.delivery_status || 'legacy')} · ${esc(row.scheduled_at)}</span><small>${esc(row.message.slice(0, 140))}</small>${row.approval_status === 'pending' || row.status === 'draft' ? `<button onclick="approve(${row.id})">Aprovar</button><button onclick="cancelCampaign(${row.id})" style="background:#71434b">Cancelar</button>` : ''}</article>`).join('') || '<p>Nenhum disparo criado.</p>';
   res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WhatsApp Control</title><style>body{font:16px system-ui;background:#101820;color:#eaf2f4;max-width:760px;margin:0 auto;padding:18px}h1{font-size:25px}.pill{color:#8ee6b2}form,article{background:#172630;border:1px solid #29414d;border-radius:14px;padding:14px;margin:12px 0}label{display:block;margin-top:10px}input,textarea,button{font:inherit;width:100%;box-sizing:border-box;padding:11px;border-radius:9px;border:1px solid #44606b;background:#0d171d;color:#fff}button{margin-top:14px;background:#1c8c61;border:0;font-weight:700}small,span{display:block;color:#aac0c7;margin-top:6px}.note{font-size:13px;color:#c9d7da}</style><h1>WhatsApp Control</h1><p class="pill">Conector: ${esc(state)} · Piloto com aprovação</p><form id="campaign"><label>Título<input name="title" maxlength="120" required placeholder="Ex.: Aviso de manutenção"></label><label>Mensagem<textarea name="message" maxlength="4000" rows="5" required placeholder="Digite a mensagem..."></textarea></label><label>Números autorizados, separados por vírgula<input name="recipients" required placeholder="5511999999999,5521999999999"></label><label>Agendar para <input name="scheduled_at" type="datetime-local" required></label><p class="note">A IA entra na etapa de revisão. Nada é enviado sem você aprovar.</p><button>Criar rascunho</button></form><h2>Campanhas</h2>${cards}<script>let csrfToken=null;fetch('/api/auth/status').then(r=>r.json()).then(j=>{csrfToken=j.csrf_token});const f=document.querySelector('#campaign');const act=async(id,path)=>{const r=await fetch('/api/campaigns/'+id+'/'+path,{method:'POST',headers:{'x-csrf-token':csrfToken}});if(!r.ok)alert('Não foi possível alterar a campanha');location.reload()};window.approve=(id)=>act(id,'approve');window.cancelCampaign=(id)=>act(id,'cancel');f.onsubmit=async(e)=>{e.preventDefault();const d=new FormData(f);const r=await fetch('/api/campaigns',{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':csrfToken},body:JSON.stringify({title:d.get('title'),message:d.get('message'),recipients:d.get('recipients').split(',').map(x=>x.trim()),scheduled_at:new Date(d.get('scheduled_at')).toISOString()})});const j=await r.json();alert(r.ok?'Rascunho criado. Revise e aprove na lista.':(j.detail||j.error));if(r.ok)location.reload()};</script>`);
 });
 
