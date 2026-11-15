@@ -2,7 +2,7 @@
 
 ## Codigo implantado
 
-- Commit: `913d6c2ab42819fa8b8a328433f7bda6a0148180`.
+- Commits: `913d6c2ab42819fa8b8a328433f7bda6a0148180` e `5fad0ff` (redirect de login).
 - Repositorio: `lrm-lgtm/automatic-zapzap`, branch `main`.
 - `npm run check`: aprovado.
 - `npm test`: aprovado.

@@ -47,7 +47,7 @@ integração não oficial e deve permanecer em piloto, com dispatch desabilitado
 
 ## Publicação CT 300
 
-O commit `913d6c2ab42819fa8b8a328433f7bda6a0148180` está publicado no CT 300.
+Os commits `913d6c2ab42819fa8b8a328433f7bda6a0148180` e `5fad0ff` estão publicados no CT 300.
 O acesso privado validado é `https://atendimento1.taild2b8d7.ts.net:8443/`.
 O Tailscale Serve usa o Windows como proxy LAN para o CT 300, sem dependência do
 CT 210 e sem Funnel. A sessão WhatsApp existente permanece fora do Git e não foi
