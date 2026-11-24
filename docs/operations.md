@@ -58,3 +58,10 @@ removida, recriada ou usada por uma segunda instância.
 O PWA mostra o estado real do conector, saúde básica, campanhas existentes e o
 estado vazio verdadeiro da futura integração MONI. A ingestão MONI e o envio
 produtivo pelo novo painel permanecem desativados até validação específica.
+
+
+## Integração privada INFO-LRM
+
+O INFO-LRM usa grants Ed25519 de curta duração. O CT 300 aceita somente a origem configurada em `WHATSAPP_CONTROL_INTEGRATION_ORIGINS` e valida que destinatário e conteúdo correspondem ao grant assinado. A chave privada nunca pertence ao CT ou ao PWA.
+
+Antes de habilitar envio automático, publicar esta versão preservando sessão/banco e validar: OPTIONS/CORS, grant válido, grant expirado, idempotência, campanha criada, entrega e consulta de status. Somente então avaliar `WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL=true` e `WHATSAPP_CONTROL_ENABLE_DISPATCH=true`.
