@@ -80,6 +80,16 @@ app.use('/assets', express.static(path.join(__dirname, 'public'), { index: false
 app.get('/manifest.webmanifest', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest')));
 app.get('/sw.js', (_req, res) => { res.type('application/javascript').set('Cache-Control', 'no-cache').sendFile(path.join(__dirname, 'public', 'sw.js')); });
 app.get('/health', (_req, res) => res.json({ service: 'whatsapp-control', state, has_qr: Boolean(qrDataUrl), auth_configured: auth.configured(), dispatch_enabled: dispatchEnabled, error: lastError ? 'service_error' : null }));
+app.post('/api/integrations/jobs/status', integrationApi.requireIntegration, async (req,res) => {
+  let job; try { job=integrationApi.normalizeJob(req.body); } catch(error) { return res.status(400).json({error:String(error.message||'invalid_job')}); }
+  try {
+    const row=await get('SELECT id,status,approval_status,schedule_status,delivery_status,result_json,finished_at FROM campaigns WHERE source=? AND external_id=?',[job.source,job.externalId]);
+    if(!row) return res.status(404).json({error:'job_not_found'});
+    let result=null;try{result=row.result_json?JSON.parse(row.result_json):null;}catch{}
+    return res.json({id:row.id,status:row.status,approval_status:row.approval_status,schedule_status:row.schedule_status,delivery_status:row.delivery_status,finished_at:row.finished_at||null,result});
+  } catch { return res.status(500).json({error:'database_error'}); }
+});
+
 app.post('/api/integrations/jobs', integrationApi.requireIntegration, async (req,res) => {
   let job; try { job=integrationApi.normalizeJob(req.body); } catch(error) { return res.status(400).json({error:String(error.message||'invalid_job')}); }
   try {
