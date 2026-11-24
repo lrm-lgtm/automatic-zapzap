@@ -6,6 +6,7 @@ const sqlite3 = require('sqlite3').verbose();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const auth = require('./auth');
 const { trustedProxySetting } = require('./security');
+const integrationApi = require('./integration-api');
 
 const app = express();
 app.set('trust proxy', trustedProxySetting(process.env.WHATSAPP_CONTROL_TRUSTED_PROXY_IPS));
@@ -37,8 +38,11 @@ db.serialize(() => {
     ['approved_content_hash', 'TEXT'],
     ['approval_snapshot_json', 'TEXT'],
     ['approved_by', 'TEXT'],
-    ['cancelled_at', 'TEXT']
+    ['cancelled_at', 'TEXT'],
+    ['source', 'TEXT'],
+    ['external_id', 'TEXT']
   ]) db.run(`ALTER TABLE campaigns ADD COLUMN ${column[0]} ${column[1]}`, () => {});
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_campaigns_source_external ON campaigns(source,external_id) WHERE source IS NOT NULL AND external_id IS NOT NULL');
   db.run("UPDATE campaigns SET approval_status=CASE WHEN status='approved' THEN 'approved' WHEN status='cancelled' THEN 'revoked' ELSE COALESCE(approval_status,'pending') END, schedule_status=CASE WHEN status IN ('approved','sending','finished') THEN 'scheduled' WHEN status='cancelled' THEN 'cancelled' ELSE CASE WHEN scheduled_at IS NOT NULL THEN 'scheduled' ELSE 'unscheduled' END END, delivery_status=CASE WHEN status='sending' THEN 'sending' WHEN status='finished' THEN 'completed' WHEN status='cancelled' THEN 'idle' ELSE COALESCE(delivery_status,'idle') END, revision=COALESCE(revision,1), content_hash=COALESCE(content_hash,'legacy')");
 });
 
@@ -63,6 +67,27 @@ app.use('/assets', express.static(path.join(__dirname, 'public'), { index: false
 app.get('/manifest.webmanifest', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest')));
 app.get('/sw.js', (_req, res) => { res.type('application/javascript').set('Cache-Control', 'no-cache').sendFile(path.join(__dirname, 'public', 'sw.js')); });
 app.get('/health', (_req, res) => res.json({ service: 'whatsapp-control', state, has_qr: Boolean(qrDataUrl), auth_configured: auth.configured(), dispatch_enabled: dispatchEnabled, error: lastError ? 'service_error' : null }));
+app.post('/api/integrations/jobs', integrationApi.requireIntegration, async (req,res) => {
+  let job; try { job=integrationApi.normalizeJob(req.body); } catch(error) { return res.status(400).json({error:String(error.message||'invalid_job')}); }
+  try {
+    const existing=await get('SELECT id,status,approval_status,schedule_status,delivery_status FROM campaigns WHERE source=? AND external_id=?',[job.source,job.externalId]);
+    if(existing) return res.json({id:existing.id,duplicate:true,status:existing.status,approval_status:existing.approval_status,schedule_status:existing.schedule_status,delivery_status:existing.delivery_status});
+    const hash=contentHash({title:job.title,message:job.message,recipients:[job.recipient]});
+    const trustedAuto=process.env.WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL==='true' && job.userConfirmed;
+    const stamp=nowIso(),status=trustedAuto?'approved':'draft',approvalStatus=trustedAuto?'approved':'pending',deliveryStatus=trustedAuto?'queued':'idle';
+    const result=await run('INSERT INTO campaigns (title,message,recipients_json,scheduled_at,status,created_at,revision,approval_status,schedule_status,delivery_status,content_hash,approved_at,approved_by,approved_revision,approved_content_hash,approval_snapshot_json,source,external_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[
+      job.title,job.message,JSON.stringify([job.recipient]),job.scheduledAt,status,stamp,1,approvalStatus,'scheduled',deliveryStatus,hash,trustedAuto?stamp:null,trustedAuto?'integration:'+job.source:null,trustedAuto?1:null,trustedAuto?hash:null,trustedAuto?JSON.stringify({title:job.title,message:job.message,recipients:[job.recipient],scheduled_at:job.scheduledAt,revision:1,content_hash:hash}):null,job.source,job.externalId
+    ]);
+    res.status(201).json({id:result.lastID,duplicate:false,status,approval_status:approvalStatus,schedule_status:'scheduled',delivery_status:deliveryStatus,auto_approved:trustedAuto});
+  } catch(error) {
+    if(String(error?.message||'').includes('UNIQUE constraint')) {
+      const existing=await get('SELECT id,status,approval_status,schedule_status,delivery_status FROM campaigns WHERE source=? AND external_id=?',[job.source,job.externalId]);
+      if(existing) return res.json({id:existing.id,duplicate:true,...existing});
+    }
+    res.status(500).json({error:'database_error'});
+  }
+});
+
 app.get('/login', (_req, res) => res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Entrar · WhatsApp Control</title><style>body{font:16px system-ui;background:#101820;color:#eaf2f4;max-width:420px;margin:0 auto;padding:18px}form{background:#172630;border:1px solid #29414d;border-radius:14px;padding:18px}label{display:block;margin-top:12px}input,button{font:inherit;width:100%;box-sizing:border-box;padding:11px;border-radius:9px;border:1px solid #44606b;background:#0d171d;color:#fff}button{margin-top:18px;background:#1c8c61;border:0;font-weight:700}.note{color:#aac0c7;font-size:13px}</style><h1>WhatsApp Control</h1><p class="note">Acesso privado da central.</p><form id="login"><label>Usuário<input name="username" autocomplete="username" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar</button><p id="error" class="note"></p></form><script>document.querySelector('#login').onsubmit=async(e)=>{e.preventDefault();const d=new FormData(e.target);const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:d.get('username'),password:d.get('password')})});if(r.ok){location.href='/'}else{const j=await r.json();document.querySelector('#error').textContent=j.error==='auth_not_configured'?'Autenticação ainda não foi configurada no servidor.':'Usuário ou senha inválidos.'}};</script>`));
 app.post('/login', auth.login);
 app.get('/api/auth/status', auth.authStatus);

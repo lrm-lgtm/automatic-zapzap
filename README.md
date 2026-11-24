@@ -48,6 +48,12 @@ Em produção, o serviço systemd está em `whatsapp-qr.service`. Ajuste os
 caminhos da sessão e do banco para o ambiente de destino; eles não devem ser
 versionados.
 
+## Integração entre sistemas LRM
+
+A branch de integração adiciona `POST /api/integrations/jobs` para receber notificações idempotentes de outros sistemas do ecossistema. O endpoint usa Bearer token cujo SHA-256 fica somente no servidor em `WHATSAPP_CONTROL_INTEGRATION_TOKEN_SHA256`. O token em texto não deve ser versionado.
+
+Cada job exige `source`, `external_id`, `title`, `message` e `recipient`. O par `source + external_id` é único, evitando disparo duplicado. Por padrão o job entra como rascunho. A autoaprovação só é possível se o servidor tiver `WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL=true` e o cliente declarar `user_confirmed=true`; o dispatch geral continua dependendo de `WHATSAPP_CONTROL_ENABLE_DISPATCH=true`.
+
 ## API mínima
 
 - `GET /health` — estado do cliente;

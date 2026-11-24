@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check auth.js && node --check security.js && node --check tools/hash-password.js",
+    "check": "node --check server.js && node --check auth.js && node --check security.js && node --check integration-api.js && node --check tools/hash-password.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
