@@ -23,6 +23,7 @@
       "puppeteer": "25.17.0",
       "puppeteer-core": "25.17.0",
       "@puppeteer/browsers": "3.2.7",
+      "chromium-bidi": "14.0.0",
       "zod": "4.6.7"
     }
   }
