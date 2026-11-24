@@ -62,6 +62,6 @@ produtivo pelo novo painel permanecem desativados até validação específica.
 
 ## Integração privada INFO-LRM
 
-O INFO-LRM usa grants Ed25519 de curta duração. O CT 300 aceita somente a origem configurada em `WHATSAPP_CONTROL_INTEGRATION_ORIGINS` e valida que destinatário e conteúdo correspondem ao grant assinado. A chave privada nunca pertence ao CT ou ao PWA.
+O INFO-LRM usa grants HMAC de curta duração emitidos por uma Function autenticada. O CT 300 não recebe o segredo: valida cada grant pela Function `communication-verify` do próprio INFO-LRM. O navegador recebe somente o grant expirável; destinatário e conteúdo ficam vinculados ao grant.
 
 Antes de habilitar envio automático, publicar esta versão preservando sessão/banco e validar: OPTIONS/CORS, grant válido, grant expirado, idempotência, campanha criada, entrega e consulta de status. Somente então avaliar `WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL=true` e `WHATSAPP_CONTROL_ENABLE_DISPATCH=true`.
