@@ -62,18 +62,41 @@ client.on('disconnected', (reason) => { state = 'disconnected'; lastError = Stri
 
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false }));
+const integrationOrigins=new Set(String(process.env.WHATSAPP_CONTROL_INTEGRATION_ORIGINS||'https://lrm-campo-pessoal.netlify.app').split(',').map(x=>x.trim()).filter(Boolean));
+app.use('/api/integrations', (req,res,next)=>{
+  const origin=String(req.get('origin')||'');
+  if(origin){
+    if(!integrationOrigins.has(origin)) return res.status(403).json({error:'origin_not_allowed'});
+    res.set('Access-Control-Allow-Origin',origin);
+    res.set('Vary','Origin');
+    res.set('Access-Control-Allow-Headers','Authorization, Content-Type');
+    res.set('Access-Control-Allow-Methods','POST, GET, OPTIONS');
+  }
+  if(req.method==='OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 app.use('/assets', express.static(path.join(__dirname, 'public'), { index: false, maxAge: '1h' }));
 app.get('/manifest.webmanifest', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest')));
 app.get('/sw.js', (_req, res) => { res.type('application/javascript').set('Cache-Control', 'no-cache').sendFile(path.join(__dirname, 'public', 'sw.js')); });
 app.get('/health', (_req, res) => res.json({ service: 'whatsapp-control', state, has_qr: Boolean(qrDataUrl), auth_configured: auth.configured(), dispatch_enabled: dispatchEnabled, error: lastError ? 'service_error' : null }));
+app.post('/api/integrations/jobs/status', integrationApi.requireIntegration, async (req,res) => {
+  let job; try { job=integrationApi.normalizeJob(req.body); } catch(error) { return res.status(400).json({error:String(error.message||'invalid_job')}); }
+  try {
+    const row=await get('SELECT id,status,approval_status,schedule_status,delivery_status,result_json,finished_at FROM campaigns WHERE source=? AND external_id=?',[job.source,job.externalId]);
+    if(!row) return res.status(404).json({error:'job_not_found'});
+    let result=null;try{result=row.result_json?JSON.parse(row.result_json):null;}catch{}
+    return res.json({id:row.id,status:row.status,approval_status:row.approval_status,schedule_status:row.schedule_status,delivery_status:row.delivery_status,finished_at:row.finished_at||null,result});
+  } catch { return res.status(500).json({error:'database_error'}); }
+});
+
 app.post('/api/integrations/jobs', integrationApi.requireIntegration, async (req,res) => {
   let job; try { job=integrationApi.normalizeJob(req.body); } catch(error) { return res.status(400).json({error:String(error.message||'invalid_job')}); }
   try {
     const existing=await get('SELECT id,status,approval_status,schedule_status,delivery_status FROM campaigns WHERE source=? AND external_id=?',[job.source,job.externalId]);
     if(existing) return res.json({id:existing.id,duplicate:true,status:existing.status,approval_status:existing.approval_status,schedule_status:existing.schedule_status,delivery_status:existing.delivery_status});
     const hash=contentHash({title:job.title,message:job.message,recipients:[job.recipient]});
-    const trustedAuto=process.env.WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL==='true' && job.userConfirmed;
+    const trustedAuto=process.env.WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL==='true' && job.userConfirmed && ['lrm-grant','machine'].includes(req.integrationAuth?.kind);
     const stamp=nowIso(),status=trustedAuto?'approved':'draft',approvalStatus=trustedAuto?'approved':'pending',deliveryStatus=trustedAuto?'queued':'idle';
     const result=await run('INSERT INTO campaigns (title,message,recipients_json,scheduled_at,status,created_at,revision,approval_status,schedule_status,delivery_status,content_hash,approved_at,approved_by,approved_revision,approved_content_hash,approval_snapshot_json,source,external_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[
       job.title,job.message,JSON.stringify([job.recipient]),job.scheduledAt,status,stamp,1,approvalStatus,'scheduled',deliveryStatus,hash,trustedAuto?stamp:null,trustedAuto?'integration:'+job.source:null,trustedAuto?1:null,trustedAuto?hash:null,trustedAuto?JSON.stringify({title:job.title,message:job.message,recipients:[job.recipient],scheduled_at:job.scheduledAt,revision:1,content_hash:hash}):null,job.source,job.externalId
