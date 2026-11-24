@@ -50,9 +50,9 @@ versionados.
 
 ## Integração entre sistemas LRM
 
-A branch de integração adiciona `POST /api/integrations/jobs` para receber notificações idempotentes de outros sistemas do ecossistema. O endpoint usa Bearer token cujo SHA-256 fica somente no servidor em `WHATSAPP_CONTROL_INTEGRATION_TOKEN_SHA256`. O token em texto não deve ser versionado.
+A integração expõe `POST /api/integrations/jobs` para notificações idempotentes de outros sistemas LRM. O INFO-LRM usa `Authorization: LRMGrant ...`: o grant expira rapidamente e é validado pelo backend do próprio INFO-LRM, de modo que o CT 300 não recebe nenhum segredo compartilhado. O Bearer token SHA-256 continua disponível apenas como fallback para integrações máquina-a-máquina controladas.
 
-Cada job exige `source`, `external_id`, `title`, `message` e `recipient`. O par `source + external_id` é único, evitando disparo duplicado. Por padrão o job entra como rascunho. A autoaprovação só é possível se o servidor tiver `WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL=true` e o cliente declarar `user_confirmed=true`; o dispatch geral continua dependendo de `WHATSAPP_CONTROL_ENABLE_DISPATCH=true`.
+Cada job exige `source`, `external_id`, `title`, `message` e `recipient`. O par `source + external_id` é único, evitando disparo duplicado. `POST /api/integrations/jobs/status` consulta o estado sem criar novo envio. Por padrão o job entra como rascunho. A autoaprovação só é possível se o servidor tiver `WHATSAPP_CONTROL_TRUSTED_AUTO_APPROVAL=true` e o cliente declarar `user_confirmed=true`; o dispatch geral continua dependendo de `WHATSAPP_CONTROL_ENABLE_DISPATCH=true`.
 
 ## API mínima
 
